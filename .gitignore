@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.cache/
+cache/
+.venv/
+venv/
+*.sqlite*
+*.db*
+*.jsonl
+*.zst
+*.zip
+*.log
+.DS_Store
+Thumbs.db
+exports/
+config.json
