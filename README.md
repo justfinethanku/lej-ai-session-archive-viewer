@@ -1,95 +1,181 @@
 # LEJ AI Session Archive Viewer
 
-Your past AI work, in one local reading page. Find a session, read the conversation, open tool details, follow related sessions, or export Markdown. Add your own keyword tags to follow work across sessions in time order.
+Every conversation you've had with an AI coding tool, in one place you can search and read. It runs on your computer and stays there.
 
-Works on macOS and Windows. Python 3.10 or newer with SQLite FTS5; no build step or required packages. The interface is deliberately plain and ready for a separate design pass.
+![A session open in the viewer: the list on the left, the conversation on the right](docs/design/after-transcript.png)
+
+You've done months of work in Claude Code, Codex, T3 Code, Cursor and the rest. Each app keeps its own history in its own format, and most of it is hard to get back to. This viewer reads those histories where they already live and gives you one list, one search box and one clean page to read.
+
+- **Find it.** Search a phrase across every conversation and every tool step. Narrow by app, folder, date or tag.
+- **Read it.** Your turns and the assistant's turns, with tool steps folded out of the way until you want them.
+- **Follow it.** Tag a piece of work by keyword, then read it oldest first as a chain across apps and weeks.
+- **Keep it.** Export one session, or a whole chain, as Markdown.
+
+Nothing leaves your machine. There is no account, no API key, no cloud and no telemetry. Your session files are read and never changed.
 
 ## Start
 
-Download or clone this repository to a folder of your choice. In that folder, run:
+You need Python 3.10 or newer. There is nothing to install and nothing to build.
 
-**macOS:** `python3 viewer.py`
+Download or clone this repository, open a terminal in that folder, and run:
 
-**Windows (PowerShell or Command Prompt):** `py -3 viewer.py`
+| | |
+| --- | --- |
+| **Mac** | `python3 viewer.py` |
+| **Windows** | `py -3 viewer.py` |
 
-Open **http://127.0.0.1:8765**. Stop with Ctrl-C. Use `--port 8766` if the port is busy. The app does not launch a browser or contact any service.
+Then open **http://127.0.0.1:8765** in your browser. Press Ctrl-C in the terminal to stop. If the port is taken, add `--port 8766`.
 
-On first run, **Sources** shows supported apps, detected locations, session counts and toggles. Nothing is indexed until you enable a source and choose **Save sources and tags**. A location is detected from files on disk, not from an assumption that an app is installed. Enable only what you want. Choose **Sessions** to read the archive. Wait for **Ready** before judging full search coverage. Refresh rebuilds the index; large archives can take several minutes. Disabling a source removes its sessions from the rebuilt index. Deleted source files disappear on refresh too.
+The first screen shows what the viewer found on your computer. Turn on the apps you want and choose **Save and index**. Nothing is indexed until you do. A large archive takes several minutes the first time. You can start reading while it runs, and the bar at the top tells you how far along it is.
+
+![First run: the apps found on this computer, each with a count and a switch](docs/design/after-first-run-picked.png)
 
 ### Set it up with your agent
 
-Paste this into Claude Code, Codex, Cursor, or another coding agent, with this repository attached or its location supplied:
+Don't want to do it by hand? Paste this into Claude Code, Codex, Cursor or any coding agent, from this folder:
 
-> Set up LEJ AI Session Archive Viewer from this repository: read AGENTS.md, check Python, start it locally, and give me the URL. Keep my source stores unchanged and all session data out of Git.
+> Set up LEJ AI Session Archive Viewer from this repository. Read AGENTS.md, check Python, start it locally, and give me the URL. Don't change my session files, and keep all session data out of Git.
 
-There is no cloud account, API key, or subscription to configure. Agents can follow [AGENTS.md](AGENTS.md).
+The agent's steps are in [AGENTS.md](AGENTS.md).
 
-## Sources
+### Try it with made-up data first
 
-| Source | What the viewer reads |
+```
+python3 tools/demo.py
+```
+
+This builds a pretend home folder full of sample sessions and opens the viewer on it at http://127.0.0.1:8799. It never touches your real data. Add `--first-run` to see the first screen as a new user would. Every screenshot in this repository comes from this demo.
+
+## What it reads
+
+| App | What the viewer reads |
 | --- | --- |
 | Claude Code | `.claude/projects/**/*.jsonl`, including helper files |
-| Codex | Versioned `thread_history_*.sqlite` and `state_*.sqlite`; active and archived JSONL, legacy JSON, `.jsonl.zst`; `history.jsonl` |
-| T3 Code | `.t3/userdata/statev2.sqlite`; messages, folded tools and parent/child links |
-| OpenCode | `opencode.db`, legacy `storage/session`, `storage/message`, `storage/part` JSON, legacy database message/part and newer session_v2/session_message stores |
+| Codex | Versioned `thread_history_*.sqlite` and `state_*.sqlite`; active and archived JSONL, legacy JSON and `.jsonl.zst`; `history.jsonl` |
+| T3 Code | `.t3/userdata/statev2.sqlite`: messages, tool steps and parent/child links |
+| OpenCode | `opencode.db` (both schema generations) and the legacy `storage/` JSON tree |
 | Cursor | `.cursor/projects/**/*.jsonl` transcript files |
-| Claude.ai / Claude desktop | Import an official export ZIP containing `conversations.json` |
-| ChatGPT | Import an official export ZIP containing `conversations.json` |
-| Grok CLI | `.grok/sessions/**/chat_history.jsonl`, summary metadata and folded tools |
-| Gemini CLI | Detected at `.gemini`; current local format not yet supported |
-| Antigravity | Detected at `.gemini/antigravity`; current local format not yet supported |
-| Cursor app store | Detected separately in app support; database format not yet supported |
+| Grok CLI | `.grok/sessions/**/chat_history.jsonl` with its summary metadata |
+| Claude.ai and Claude desktop | An official export ZIP that you import |
+| ChatGPT | An official export ZIP that you import |
+| Gemini CLI, Antigravity, Cursor's app database | Found and shown, but not readable yet |
 
-OpenCode's legacy `storage/` JSON reader is covered by synthetic tests; this Mac's storage folder contains only session diffs, so real transcript verification used its database. Detection of an unsupported source does not claim a transcript count. Cloud apps have no supported local transcript store; use **Import data export** even if their desktop app is installed.
+A source shows up because its files are on disk, not because the app is installed. When the viewer finds a folder it can't read, it says so and claims no count.
 
-**OpenRouter is an API, with no local session store.** Its traffic appears under whichever app called it.
+Chats from Claude.ai and ChatGPT live on their servers, so there is nothing local to read, even with the desktop app installed. Ask the app for a data export and import the ZIP (see below).
 
-Codex database items take precedence over rollouts with the same native session ID. State databases provide titles, dates, models and lineage; turn metadata alone does not suppress a file transcript. Realtime items merge with regular items by item ID. If several history versions contain a thread, the highest numeric version wins. Typed prompt history is one extra searchable transcript and can repeat prompts. Different apps can record the same work; the viewer keeps their source records separate. Counts describe records, not unique human conversations.
+OpenRouter is an API with no history of its own. Its traffic shows up under whichever app made the call.
 
-Compressed Codex archives work with Python 3.14's standard `compression.zstd`, the optional well-known `zstandard` package, or a `zstd` executable already on PATH. On earlier Python, install optional support with `python3 -m pip install zstandard` (Mac) or `py -3 -m pip install zstandard` (Windows). Setup may use the internet; the running viewer does not. Without a decoder, affected files produce a visible warning.
+Good to know:
+
+- **Counts are records, not unique conversations.** If two apps recorded the same work, you see both.
+- **Codex** keeps a database and files. The database wins when both hold the same session. Your typed-prompt history shows up as one extra transcript.
+- **Cursor's** transcript files carry no timestamps, so those sessions show no date.
+- **Compressed Codex archives** (`.jsonl.zst`) need Python 3.14, or the `zstandard` package (`python3 -m pip install zstandard`), or a `zstd` program on your PATH. Without one, those files are skipped with a warning.
 
 ## Read and organize
 
-Search words or a phrase across messages and tool details. Filter by source, project folder, dates or tag. Tool calls stay folded. Text is displayed as text, including HTML found in a session. Images and attachments are omitted; nothing is fetched. Open a parent or child link when the source supplies one.
+![A tag read oldest first, drawn as a chain down the list](docs/design/after-chain.png)
 
-In Sources, edit the tag rules as JSON, for example:
+**Search** looks for your exact words or phrase in messages and tool steps. Matches are highlighted, and **Next match** walks through them.
 
-```json
-{"garden": ["garden planner", "seed calendar"], "learning": ["practice exercise"]}
-```
+**Tool steps stay folded.** A run of them collapses to one line, like "6 tool steps". Open a step to see the command and its output, and open "Full record" for the raw data.
 
-A session matches when any keyword appears as whole words, ignoring case and allowing flexible spaces. Matches include its title, project and transcript. Save to rebuild. Select a tag and **Chain: oldest first** to read its sessions in time order. Export one session or the whole tag chain as Markdown. Chain export includes every session with that tag, regardless of the current filters.
+**Related sessions link up.** When one session hands work to another (T3 Code, Codex and OpenCode record this), you get "Started from" and "Handed off to" links at the top.
 
-Tag rules and source toggles also live in `config.json` in the app-data folder below. Stop the viewer before editing that file, then restart and refresh. No rules come bundled with personal or client names.
+**Tags** are how you follow one piece of work. On the Sources screen, give a tag a name and a few keywords:
 
-## Copied folders and Windows paths
+| Tag | Keywords |
+| --- | --- |
+| garden | garden planner, seed calendar |
 
-Choose **Add a folder**, select the format and enter the full local path. Claude accepts either a `.claude` root or its `projects` folder. Codex expects the `.codex` root containing databases and `sessions` / `archived_sessions`. OpenCode expects its data root containing `opencode.db`. Cursor accepts its `.cursor` root or `projects`. T3 expects the full database path. Save to scan and index. Multiple roots can be enabled together.
+Every session that mentions a keyword in its title, folder or conversation gets the tag. Keywords match whole words and ignore capitals. Pick the tag in the list, choose **Read as a chain, oldest first**, and you can read the whole story in order. **Export the whole chain** saves it as one Markdown file.
 
-Default homes use the current account. Windows probes `%USERPROFILE%\.claude`, `%USERPROFILE%\.codex`, `%USERPROFILE%\.t3`, `%USERPROFILE%\.cursor`, and app data under `%APPDATA%` / `%LOCALAPPDATA%`. OpenCode also probes its XDG-style `.local/share/opencode` root. macOS probes home dot-folders, `.local/share/opencode` and `Library/Application Support/Cursor`. Linux paths are resolved too, but launch verification targets Mac and Windows.
+**Text stays text.** Session content is never run or rendered as a web page. Headings, bold and code blocks get light formatting, and that's all. Images and attachments are left out. Nothing is fetched.
 
-WSL homes are optional extra roots: add a copied WSL folder, or an accessible `\\wsl.localhost\DISTRO\home\USER\.codex` path. The viewer does not start WSL or search other user accounts. Project paths from another OS remain labels; those projects need not exist locally.
+Keys: `/` to search, `J` and `K` for the next and previous session, arrow keys to move through the list.
 
-For copied SQLite data, use a completed SQLite backup or copy the database and its matching `-wal` file while the app is stopped. A database copied alone from a running app can miss recent messages.
+## Bring in more
+
+![The Add a folder and Import an export panels](docs/design/after-add-and-import.png)
+
+### Claude.ai and ChatGPT exports
+
+In Claude or ChatGPT, open Settings, find the data or privacy section, and ask to export your data. They email you a link to a ZIP. Download it, leave it zipped, and paste its full path into **Import a Claude.ai or ChatGPT export** on the Sources screen.
+
+The ZIP is read where it sits. Only `conversations.json` is used (up to 512 MB), and a copy of the conversations goes into this app's private data folder. Nothing is uploaded, attachments are skipped, and importing the same export twice won't make duplicates. Branched ChatGPT answers are all kept, in time order.
+
+### Folders from another computer
+
+Use **Add a folder** for session data you copied from another machine, or keep somewhere unusual. Pick the app and paste the full path:
+
+| App | Point to |
+| --- | --- |
+| Claude Code | The `.claude` folder, or its `projects` folder |
+| Codex | The `.codex` folder, the one with `sessions` and `archived_sessions` |
+| T3 Code | The `statev2.sqlite` file itself |
+| OpenCode | The data folder with `opencode.db` or `storage` |
+| Cursor | The `.cursor` folder, or its `projects` folder |
+| Grok | The `.grok` folder |
+
+You can add as many as you like. Folder names inside those sessions are shown as labels; the folders don't need to exist on this computer.
+
+When you copy a SQLite database, copy its matching `-wal` file too, with the app closed. A database copied alone from a running app can be missing its newest messages.
+
+### Where it looks by default
+
+Your own account's home folder: `.claude`, `.codex`, `.t3`, `.cursor`, `.grok`, `.gemini` and `.local/share/opencode`, plus Cursor's app-support folder. On Windows that means `%USERPROFILE%`, `%APPDATA%` and `%LOCALAPPDATA%`. Linux paths resolve too, but only Mac and Windows have been checked.
+
+WSL homes are not searched. Add one as a folder, for example `\\wsl.localhost\Ubuntu\home\you\.codex`.
 
 ## Private by default
 
-- Reads source stores without editing them. Live SQLite databases are never opened through SQLite: a stable database/WAL pair is copied by ordinary file reads. Only that private copy is recovered; transcript reads use SQLite `mode=ro&immutable=1`. This takes no SQLite lock on a live store, so apps can stay running.
-- Binds only to **127.0.0.1**. Rejects foreign Host headers and cross-origin writes. No telemetry, network calls, CDN, external fonts, or remote assets. All HTML, CSS and JavaScript ship in this repo.
-- Indexes, database snapshots, configuration and imported export JSON live in per-user app data, never the repository: macOS `~/Library/Application Support/lej-ai-session-archive-viewer`; Windows `%LOCALAPPDATA%\lej-ai-session-archive-viewer`; Linux `$XDG_DATA_HOME/lej-ai-session-archive-viewer` (default `~/.local/share`). Override with `--data-dir` pointing outside the checkout and source folders.
+- **Read-only.** Your session files are never edited. Live databases are never even opened: the viewer copies the database and its WAL file as plain files, and reads only that private copy. It takes no lock, so your apps can stay open.
+- **Local only.** The server listens on 127.0.0.1 and nowhere else. It rejects requests from other hosts and other sites. It makes no network calls: no telemetry, no CDN, no remote fonts. Everything it needs ships in this folder.
+- **Kept apart.** The index, database copies, settings and imported exports live in your per-user app data, never in this folder:
+  - Mac: `~/Library/Application Support/lej-ai-session-archive-viewer`
+  - Windows: `%LOCALAPPDATA%\lej-ai-session-archive-viewer`
+  - Linux: `$XDG_DATA_HOME/lej-ai-session-archive-viewer` (default `~/.local/share`)
 
-The private index contains your conversations and may contain secrets from them. Keep app data on an encrypted disk and out of shared folders. Disabling a source removes it from search on refresh; snapshots and imported originals remain in app data until you remove that folder with the viewer stopped. Markdown exports contain tool details too. The viewer is not a secret-redaction tool. Other programs running under your account can read local data.
+  Use `--data-dir` to put it somewhere else, outside this folder and outside your sources.
 
-## Troubleshoot
+Be clear-eyed about one thing: the index holds your conversations, and those can hold secrets. Keep it on an encrypted disk and out of shared or synced folders. Markdown exports include tool details. The viewer does not redact anything.
 
-Check `python3 --version` or `py -3 --version`. Install Python from python.org if missing. A missing FTS5 error means your Python SQLite build needs replacing with one that includes FTS5. A missing source is skipped. Unsupported formats show their status rather than an invented count.
+Turning a source off removes it from search the next time the index is rebuilt. Its database copy, and any imported export, stay in app data until you delete that folder (stop the viewer first).
 
-If a database keeps changing during copying, refresh during a quiet moment. Partial JSONL lines are skipped with a warning. Schemas can change; report the app/version and table or field names without attaching private transcripts. Refresh errors appear in the status bar; a failed adapter can leave partial results until the next successful refresh. Refresh currently rebuilds enabled sources rather than incrementally updating them. Allow several GB for large archives and snapshots.
+## When something's off
 
-Official export import is local: enter the full ZIP path in Sources. Nothing is uploaded and ZIP members are never extracted. The importer reads only `conversations.json` (up to 512 MB uncompressed). ChatGPT alternate branches are included once each in timestamp order. Attachments are not imported. Reimporting an identical ZIP does not duplicate it; conversation IDs keep updated exports from duplicating sessions.
+**It won't start.** Run `python3 --version` (Windows: `py -3 --version`). You need 3.10 or newer; get it from python.org. An error about FTS5 means your Python's SQLite was built without full-text search, and you need a different Python build.
 
-## Development and license
+**"Address already in use."** Add `--port 8766`.
 
-Run `python3 -m unittest discover -s tests -v` (Mac) or `py -3 -m unittest discover -s tests -v` (Windows). CI includes both OSes. [Verification](docs/verification.md) records local results and limits; [test runbook](docs/testing-runbook.md) explains retesting. HTML, CSS and JS are separated in `static/`; colors and fonts have CSS variables.
+**New sessions aren't showing.** The index doesn't update by itself. Click the status in the top right, then **Rebuild the index**. A rebuild starts from scratch, so search is incomplete until it finishes.
+
+**A source says "Not supported yet."** The folder is there, but this version can't read that format. If it's an app in the table above, the app may have changed how it saves sessions. Open an issue with the app version and the table or field names. Please don't attach private transcripts.
+
+**"A file had a problem."** Usually an unfinished last line in a session that's still running. The rest of the index is fine.
+
+**A database "kept changing."** An app was writing while the viewer copied its database. Rebuild during a quiet moment.
+
+**Disk space.** Plan for a few GB with a large archive, for the index and the database copies.
+
+Settings also live in `config.json` in the app data folder. Stop the viewer before editing it by hand.
+
+## Development
+
+```
+python3 -m unittest discover -s tests -v
+```
+
+On Windows use `py -3`. The tests build made-up stores in temporary folders and never touch real data. CI runs them on Mac and Windows.
+
+- [SPEC.md](SPEC.md): what the archive promises
+- [docs/verification.md](docs/verification.md): what was checked, and the limits
+- [docs/testing-runbook.md](docs/testing-runbook.md): how to retest
+- [docs/design/](docs/design/): design notes and before-and-after screenshots
+
+The interface is plain HTML, CSS and JavaScript in `static/`, with no build step. Colors, type and spacing are CSS variables at the top of `static/style.css`. The fonts (Bricolage Grotesque, Hanken Grotesk and JetBrains Mono) ship in `static/fonts/` under the SIL Open Font License; their license files sit beside them.
+
+## License
 
 MIT, copyright Limited Edition Jonathan. See [LICENSE](LICENSE).

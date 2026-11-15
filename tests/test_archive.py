@@ -188,6 +188,12 @@ class ArchiveTests(unittest.TestCase):
         try:
             for path in ('/','/static/app.js','/static/style.css','/api/status','/api/list','/api/sources'):
                 with urllib.request.urlopen(base+path) as r:self.assertEqual(r.status,200)
+            for path in ('/static/fonts/hanken-grotesk-latin.woff2','/static/favicon.svg'):
+                with urllib.request.urlopen(base+path) as r:self.assertEqual(r.status,200)
+            with urllib.request.urlopen(base+'/static/style.css') as r:self.assertIn("font-src 'self'",r.headers['Content-Security-Policy'])
+            for path in ('/static/../viewer.py','/static/missing.woff2','/static/fonts/hanken-grotesk-OFL.txt'):
+                with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(base+path)
+                self.assertEqual(error.exception.code,404);error.exception.close()
             for headers in ({'Host':'foreign.invalid'},{'Host':'foreign.invalid','Origin':'http://foreign.invalid'}):
                 req=urllib.request.Request(base+'/api/config',data=b'{}',headers=headers,method='POST')
                 with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(req)

@@ -1,6 +1,6 @@
 # Archive contract
 
-Python 3.10+, standard library HTTP server on 127.0.0.1. The bundled static interface talks only to same-origin JSON routes. No transcript content executes. SQLite FTS5 indexes compressed transcript blocks in per-user app data. Original stores remain authoritative.
+Python 3.10+, standard library HTTP server on 127.0.0.1. The bundled static interface talks only to same-origin JSON routes. No transcript content executes: session text is inserted as text nodes, with light formatting for headings, bold and code only. The Content-Security-Policy allows scripts, styles, fonts and images from this origin alone. SQLite FTS5 indexes compressed transcript blocks in per-user app data. Original stores remain authoritative.
 
 ## Normalized sessions
 
@@ -24,6 +24,6 @@ Tags map names to keyword lists. Whole-word, case-insensitive keyword matching u
 
 ## Interface boundaries
 
-GET: /, /static/style.css, /static/app.js, /api/status, /api/sources, /api/list, /api/session, /export.
+GET: /, any file that ships in static/ with a .css, .js, .woff2 or .svg extension (matched by exact name; nothing else is served), /api/status, /api/sources, /api/list, /api/session, /export.
 
 POST: /api/config, /api/import, /api/refresh. Writes require the exact loopback Host and same-origin Origin. Config/import requests are limited to 64 KB, and modifications wait until refresh finishes. HTTP bodies and search terms are not logged. Source and app-data folders must be separate; app data cannot live inside the checkout.

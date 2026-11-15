@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, urlparse
 APP = Path(__file__).resolve().parent
 PREFIX = 'orchestration_v2_'
 VERSION = '4'
+STATIC_TYPES = {'.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+                '.woff2': 'font/woff2', '.svg': 'image/svg+xml'}
 
 
 def stamp(value):
@@ -477,8 +479,13 @@ class Handler(BaseHTTPRequestHandler):
                     result['tags'] = list(self.server.store.config['tags'])
             elif parsed.path == '/api/sources':
                 result = self.server.store.discovery()
-            elif parsed.path in ('/static/style.css', '/static/app.js'):
-                self.send_data((APP/parsed.path.lstrip('/')).read_bytes(), 'text/css' if parsed.path.endswith('.css') else 'text/javascript');return
+            elif parsed.path.startswith('/static/'):
+                # Serve only files that ship in static/, matched by exact name.
+                name = parsed.path[len('/static/'):]
+                bundled = {f.relative_to(APP/'static').as_posix(): f for f in (APP/'static').rglob('*') if f.suffix in STATIC_TYPES}
+                if name not in bundled:
+                    self.send_error(404);return
+                self.send_data(bundled[name].read_bytes(), STATIC_TYPES[bundled[name].suffix]);return
             elif parsed.path == '/api/list':
                 result = self.server.store.listing(q)
             elif parsed.path == '/api/session':
@@ -523,7 +530,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', mime)
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 
     def send_data(self, data, mime, code=200):
         self.send_response(code);self.headers_common(mime)
