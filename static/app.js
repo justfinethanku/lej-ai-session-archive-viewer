@@ -21,7 +21,8 @@ const FOLDER_HINTS = {
 const state = {
   status: null, online: true, routed: false, lastListKey: '', lastListAt: 0,
   page: 0, total: 0, sessions: [], project: '', listRequest: 0,
-  current: '', session: null, blockPage: 0, blockTotal: 0, run: null, day: '', loadingAll: false,
+  current: '', session: null, sessionRequest: 0, query: null, matchCount: 0,
+  blockStart: 0, blockPage: 0, blockTotal: 0, run: null, day: '',
   found: null, config: null, saved: '', tagRows: [], expected: {}, firstRun: false, justSaved: false,
 };
 
@@ -202,7 +203,7 @@ function route() {
   const id = m ? decodeURIComponent(m[1]) : '';
   document.body.classList.toggle('reading', !!id);
   if (id && id !== state.current) openSession(id);
-  if (!id) { state.current = ''; state.session = null; welcome(); markCurrent(); }
+  if (!id) { state.current = ''; state.session = null; state.sessionRequest++; welcome(); markCurrent(); }
 }
 addEventListener('hashchange', route);
 
@@ -301,7 +302,11 @@ function resetFilters() {
   state.project = '';
   listing();
 }
-const go = id => { location.hash = '#/session/' + encodeURIComponent(id); };
+function go(id) {
+  const hash = '#/session/' + encodeURIComponent(id);
+  if (location.hash !== hash) location.hash = hash;
+  else if ($('q').value.trim()) openSession(id);
+}
 
 let typing;
 $('q').oninput = () => { clearTimeout(typing); typing = setTimeout(listing, 300); };
@@ -362,20 +367,27 @@ function welcome() {
         h('li', {}, h('kbd', { text: '↑' }), h('kbd', { text: '↓' }), ' move through the list, ', h('kbd', { text: 'Enter' }), ' to open'))));
 }
 
-async function openSession(id) {
+async function openSession(id, fromStart = false) {
+  const request = ++state.sessionRequest;
+  const query = $('q').value.trim();
+  const params = new URLSearchParams({ id });
+  if (fromStart) params.set('page', '0');
+  if (query) params.set('q', query);
   state.current = id;
-  state.blockPage = 0;
-  state.loadingAll = false;
+  state.session = null;
   markCurrent();
   let d;
-  try { d = await api('/api/session?id=' + encodeURIComponent(id) + '&page=0'); }
+  try { d = await api('/api/session?' + params); }
   catch (e) {
-    if (state.current !== id) return;
+    if (request !== state.sessionRequest) return;
     return $('reader').replaceChildren(backButton(), h('div', { class: 'welcome' }, h('h1', { text: "That session isn't in the index" }),
       h('p', { text: e.message === 'Session not found' ? 'It may have been removed when the index was rebuilt, or its source was turned off.' : e.message })));
   }
-  if (state.current !== id) return;
+  if (request !== state.sessionRequest) return;
   const s = state.session = d.session;
+  state.query = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu') : null;
+  state.matchCount = d.match_offsets.length;
+  state.blockStart = state.blockPage = d.page;
   state.blockTotal = d.total;
   state.run = null;
   state.day = '';
@@ -390,17 +402,25 @@ async function openSession(id) {
       h('div', { class: 'headActions' },
         h('a', { class: 'secondary small', href: '/export?id=' + encodeURIComponent(id), download: 'session.md', text: 'Export as Markdown',
           title: 'Saves the whole session, tool details included' }),
-        h('div', { class: 'matches', id: 'matches', hidden: true }))),
+        h('div', { class: 'matches', id: 'matches', hidden: true }),
+        d.page ? h('button', { class: 'text', type: 'button', text: 'Read from the start', onclick: () => openSession(id, true) }) : null)),
     lineage(s, d.relatives),
     h('div', { id: 'transcript' }),
     h('div', { class: 'readMore', id: 'readMore' }),
     h('div', { class: 'neighbors', id: 'neighbors' })].filter(Boolean));
-  addBlocks(d.blocks);
+  const entries = addBlocks(d.blocks);
   if (!d.blocks.length) $('transcript').append(h('p', { class: 'empty', text: state.status?.busy
     ? 'Nothing indexed for this session yet. Check back when indexing finishes.' : 'This session has no readable messages.' }));
   neighbors();
   $('reader').scrollTop = 0;
   if (NARROW.matches) scrollTo(0, 0);
+  if (!fromStart && state.matchCount) {
+    const entry = entries[d.match_offsets[0] % 100];
+    entry.build?.();
+    const mark = entry.querySelector('mark');
+    if (!mark) expandMessage(entry.querySelector('.body.clamped'));
+    revealMatch(mark || entry);
+  }
 }
 function backButton() {
   return h('a', { class: 'back text', href: '#/sessions', text: '← All sessions' });
@@ -428,11 +448,10 @@ function neighbors() {
 /* Put text into el. Marks search matches. Never parses HTML. */
 function put(el, text, q) {
   if (!q) return el.append(text);
-  const low = text.toLowerCase();
-  let from = 0, at;
-  while ((at = low.indexOf(q, from)) >= 0) {
-    el.append(text.slice(from, at), h('mark', { text: text.slice(at, at + q.length) }));
-    from = at + q.length;
+  let from = 0;
+  for (const match of text.matchAll(q)) {
+    el.append(text.slice(from, match.index), h('mark', { text: match[0] }));
+    from = match.index + match[0].length;
   }
   el.append(text.slice(from));
 }
@@ -467,9 +486,14 @@ function body(text, q) {
   if (text.length > 6000 || text.split('\n').length > 90) {
     el.classList.add('clamped');
     return [el, h('button', { class: 'text more', type: 'button', text: 'Show the whole message (' + num(text.length) + ' characters)',
-      onclick: e => { el.classList.remove('clamped'); e.target.remove(); } })];
+      onclick: () => expandMessage(el) })];
   }
   return [el];
+}
+function expandMessage(el) {
+  if (!el?.classList.contains('clamped')) return;
+  el.classList.remove('clamped');
+  el.nextElementSibling.remove();
 }
 
 /* Tool records come in many shapes. Pull out a name and one useful line; keep the rest a click away. */
@@ -508,7 +532,7 @@ function describeTool(text) {
 }
 function toolEl(b, q) {
   const info = describeTool(b.text), t = date(b.time);
-  const hit = q && b.text.toLowerCase().includes(q);
+  const hit = q && b.text.search(q) >= 0;
   const el = h('details', { class: 'tool' + (hit ? ' hasHit' : '') },
     h('summary', {}, h('span', { class: 'tname', text: info.name }), h('span', { class: 'tdetail', text: info.detail }),
       hit ? h('span', { class: 'hit', title: 'Contains your search' }) : null, t ? h('time', { text: timeText(t) }) : null));
@@ -519,7 +543,7 @@ function toolEl(b, q) {
     if (info.main) { const pre = h('pre'); put(pre, info.main, q); box.append(pre); }
     if (info.raw) {
       const raw = h('details', { class: 'raw', open: !info.main }, h('summary', { text: 'Full record' }));
-      const pre = h('pre'); put(pre, info.raw, info.main ? '' : q); raw.append(pre); box.append(raw);
+      const pre = h('pre'); put(pre, info.raw, box.querySelector('mark') ? '' : q); raw.append(pre); box.append(raw);
     }
     el.append(box);
   };
@@ -546,10 +570,16 @@ function endRun() {
   $('transcript').append(box);
 }
 function addBlocks(blocks) {
-  const q = $('q').value.trim().toLowerCase(), s = state.session;
+  const q = state.query, s = state.session;
+  const entries = [];
   for (const b of blocks) {
     const t = date(b.time);
-    if (b.kind === 'tool') { (state.run = state.run || []).push(toolEl(b, q)); continue; }
+    if (b.kind === 'tool') {
+      const tool = toolEl(b, q);
+      (state.run = state.run || []).push(tool);
+      entries.push(tool);
+      continue;
+    }
     endRun();
     if (t && t.toDateString() !== state.day) {
       state.day = t.toDateString();
@@ -557,10 +587,12 @@ function addBlocks(blocks) {
     }
     const who = b.role === 'user' ? 'You' : b.role === 'assistant' ? 'Assistant' : b.role.charAt(0).toUpperCase() + b.role.slice(1);
     const model = b.role === 'assistant' && b.model && b.model !== s.model ? b.model : '';
-    $('transcript').append(h('section', { class: 'turn ' + (b.role === 'user' ? 'user' : 'assistant') },
+    const turn = h('section', { class: 'turn ' + (b.role === 'user' ? 'user' : 'assistant') },
       h('div', { class: 'turnHead' }, h('span', { class: 'who', text: who }), model ? h('span', { text: model }) : null,
         h('time', { text: t ? timeText(t) : b.time || '' })),
-      body(b.text, q)));
+      body(b.text, q));
+    entries.push(turn);
+    $('transcript').append(turn);
   }
   endRun();
   const loaded = Math.min((state.blockPage + 1) * 100, state.blockTotal), left = state.blockTotal - loaded;
@@ -568,23 +600,31 @@ function addBlocks(blocks) {
     h('button', { class: 'secondary small', type: 'button', id: 'more', text: 'Read the next ' + Math.min(100, left),
       onclick: () => more() }),
     h('button', { class: 'text', type: 'button', text: 'Load all ' + num(left) + ' remaining', onclick: loadAll }),
-    h('span', { text: num(loaded) + ' of ' + num(state.blockTotal) + ' entries shown' })]));
+    h('span', { text: num(loaded - state.blockStart * 100) + ' of ' + num(state.blockTotal) + ' entries shown' })]));
   matchBar(q);
+  return entries;
 }
 async function more() {
-  const id = state.current;
-  state.blockPage++;
+  if (!state.session || $('more')?.disabled) return 0;
+  const id = state.current, request = state.sessionRequest, page = state.blockPage + 1;
+  const controls = $('readMore').querySelectorAll('button');
+  for (const button of controls) button.disabled = true;
   try {
-    const d = await api('/api/session?id=' + encodeURIComponent(id) + '&page=' + state.blockPage);
-    if (state.current === id) addBlocks(d.blocks);
+    const d = await api('/api/session?id=' + encodeURIComponent(id) + '&page=' + page);
+    if (request !== state.sessionRequest) return 0;
+    state.blockPage = d.page;
+    addBlocks(d.blocks);
     return d.blocks.length;
-  } catch (e) { state.blockPage--; $('readMore').append(h('span', { class: 'problem', text: e.message })); return 0; }
+  } catch (e) {
+    if (request === state.sessionRequest) $('readMore').append(h('span', { class: 'problem', text: e.message }));
+    return 0;
+  } finally {
+    for (const button of controls) button.disabled = false;
+  }
 }
 async function loadAll() {
-  const id = state.current;
-  state.loadingAll = true;
-  while (state.loadingAll && state.current === id && (state.blockPage + 1) * 100 < state.blockTotal) if (!await more()) break;
-  state.loadingAll = false;
+  const request = state.sessionRequest;
+  while (request === state.sessionRequest && (state.blockPage + 1) * 100 < state.blockTotal) if (!await more()) break;
 }
 function matchBar(q) {
   const bar = $('matches');
@@ -593,21 +633,24 @@ function matchBar(q) {
   bar.hidden = !q;
   if (!q) return;
   const partial = (state.blockPage + 1) * 100 < state.blockTotal;
-  bar.replaceChildren(count ? 'Found in ' + plural(count, 'entry', 'entries') + (partial ? ' so far' : '')
+  bar.replaceChildren(state.matchCount ? 'Found in ' + plural(state.matchCount, 'entry', 'entries')
+    : count ? 'Found in ' + plural(count, 'entry', 'entries') + (partial ? ' so far' : '')
     : partial ? 'Not in the first entries. Load more to find it.' : 'Your search matched this session by a close word form.',
-    count ? h('button', { class: 'text', type: 'button', text: 'Next match', onclick: nextMatch }) : null);
+    ...(count ? [h('button', { class: 'text', type: 'button', text: 'Next match', onclick: nextMatch })] : []));
 }
 function nextMatch() {
   for (const t of $('transcript').querySelectorAll('.tool.hasHit')) t.build();
   const marks = [...$('transcript').querySelectorAll('mark')];
   if (!marks.length) return;
   const at = marks.findIndex(m => m.classList.contains('now'));
-  marks[at]?.classList.remove('now');
-  const next = marks[(at + 1) % marks.length];
+  revealMatch(marks[(at + 1) % marks.length]);
+}
+function revealMatch(next) {
+  $('transcript').querySelector('.now')?.classList.remove('now');
   next.classList.add('now');
-  for (let p = next.parentElement; p && p.id !== 'transcript'; p = p.parentElement) {
+  for (let p = next; p && p.id !== 'transcript'; p = p.parentElement) {
     if (p.tagName === 'DETAILS') p.open = true;
-    p.classList.remove('clamped');
+    expandMessage(p);
   }
   next.scrollIntoView({ block: 'center' });
 }

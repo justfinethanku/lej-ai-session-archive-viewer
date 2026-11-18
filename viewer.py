@@ -414,6 +414,10 @@ class Store(SourceMethods):
         finally:
             src.close()
 
+    @staticmethod
+    def search_phrase(query):
+        return '"' + query.replace('"', '""') + '"'
+
     def listing(self, q):
         where, params = [], []
         for field in ('source', 'project'):
@@ -426,9 +430,8 @@ class Store(SourceMethods):
         if q.get('tag'):
             where.append('EXISTS(SELECT 1 FROM tags t WHERE t.session=s.id AND t.tag=?)');params.append(q['tag'])
         if q.get('q'):
-            phrase = '"' + q['q'].replace('"', '""') + '"'
             where.append('s.id IN (SELECT b.session FROM search JOIN blocks b ON b.id=search.rowid WHERE search MATCH ?)')
-            params.append(phrase)
+            params.append(self.search_phrase(q['q']))
         clause = ' WHERE ' + ' AND '.join(where) if where else ''
         page = max(0, int(q.get('page', 0)))
         order = 'ASC' if q.get('chain') == '1' else 'DESC'
@@ -437,15 +440,35 @@ class Store(SourceMethods):
             rows = c.execute('SELECT s.* FROM sessions s'+clause+' ORDER BY start '+order+',id LIMIT 50 OFFSET ?', params+[page*50]).fetchall()
             return {'sessions': [dict(r) for r in rows], 'total': total, 'page': page}
 
-    def session(self, sid, page=0):
+    def session(self, sid, page=None, query=''):
         with self.connect() as c:
+            # Keep offsets and the corresponding page on the same index snapshot.
+            c.execute('BEGIN')
             s = c.execute('SELECT * FROM sessions WHERE id=?', (sid,)).fetchone()
             if not s:
                 raise ValueError('Session not found')
             relatives = c.execute('SELECT id,title FROM sessions WHERE id=? OR parent=? ORDER BY start', (s['parent'], sid)).fetchall()
+            matches = []
+            if query:
+                matches = [r[0] for r in c.execute('''
+                    WITH ordered AS (
+                      SELECT id, row_number() OVER (ORDER BY time,id) - 1 AS offset
+                      FROM blocks WHERE session=:sid
+                    )
+                    SELECT offset FROM ordered
+                    WHERE id IN (
+                      SELECT rowid FROM search WHERE search MATCH :phrase AND rowid BETWEEN
+                        (SELECT min(id) FROM blocks WHERE session=:sid) AND
+                        (SELECT max(id) FROM blocks WHERE session=:sid)
+                    )
+                    ORDER BY offset
+                    ''', {'sid': sid, 'phrase': self.search_phrase(query)})]
+            if page is None:
+                page = matches[0] // 100 if matches else 0
             blocks = c.execute('SELECT * FROM blocks WHERE session=? ORDER BY time,id LIMIT 100 OFFSET ?', (sid,page*100)).fetchall()
             total = c.execute('SELECT count(*) FROM blocks WHERE session=?', (sid,)).fetchone()[0]
-            return {'session': dict(s), 'relatives': [dict(r) for r in relatives], 'blocks': [dict(r) for r in blocks], 'total': total}
+            return {'session': dict(s), 'relatives': [dict(r) for r in relatives], 'blocks': [dict(r) for r in blocks],
+                    'total': total, 'page': page, 'match_offsets': matches}
 
     def export(self, q):
         with self.connect() as c:
@@ -489,7 +512,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == '/api/list':
                 result = self.server.store.listing(q)
             elif parsed.path == '/api/session':
-                result = self.server.store.session(q['id'], max(0,int(q.get('page',0))))
+                page = max(0, int(q['page'])) if 'page' in q else None
+                result = self.server.store.session(q['id'], page, q.get('q', ''))
             elif parsed.path == '/export':
                 self.send_response(200)
                 self.headers_common('text/markdown; charset=utf-8')
