@@ -165,6 +165,9 @@ class SourceMethods:
             except Exception as e:
                 supported = False; status = 'Found, not yet supported ('+type(e).__name__+')'
             results.append(dict(s, name=KINDS[kind], supported=supported, status=status, count=count))
+        if not self.status.get('busy'):
+            from viewer import expire_snapshots
+            expire_snapshots(self.cache)
         for kind in ('claude_ai','chatgpt'):
             results.append({'id':kind,'kind':kind,'name':KINDS[kind],'path':'Official export ZIP','enabled':False,'supported':False,'status':'Import data export — no local transcripts','count':None})
         return {'sources':results,'config':self.config,'kinds':{k:v for k,v in KINDS.items() if k in PARSERS and k not in ('claude_ai','chatgpt')}}

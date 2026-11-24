@@ -175,9 +175,13 @@ def signature(path):
         return None
 
 
+def snapshot_key(source):
+    return hashlib.sha256(str(source).encode()).hexdigest()[:16]
+
+
 def snapshot(source, cache):
     """Copy a quiescent DB+WAL pair without opening/locking the live database."""
-    key = hashlib.sha256(str(source).encode()).hexdigest()[:16]
+    key = snapshot_key(source)
     target = cache / (key + '.sqlite')
     marker = cache / (key + '.json')
     sources = [source, Path(str(source) + '-wal')]
@@ -186,26 +190,59 @@ def snapshot(source, cache):
         return target
     for attempt in range(5):
         staging = Path(tempfile.mkdtemp(prefix='snapshot-', dir=cache))
-        dest = staging / 't3.sqlite'
-        before = [signature(p) for p in sources]
-        for src, dst in zip(sources, [dest, Path(str(dest) + '-wal')]):
-            if src.exists():
-                # APFS clone is fast and consumes only changed blocks.
-                result = subprocess.run(['cp', '-c', str(src), str(dst)], capture_output=True) if sys.platform == 'darwin' else None
-                if result is None or result.returncode:
-                    shutil.copyfile(src, dst)
-        after = [signature(p) for p in sources]
-        if before == after and before[0]:
-            # Open only the copy. Recover WAL in cache, then detach it for immutable reads.
-            with sqlite3.connect(dest, factory=ClosingConnection) as c:
-                c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-                c.execute('PRAGMA journal_mode=DELETE')
-            os.replace(dest, target)
-            marker.write_text(json.dumps([str(source), after]))
-            shutil.rmtree(staging)
-            return target
-        shutil.rmtree(staging)
+        try:
+            dest = staging / 't3.sqlite'
+            before = [signature(p) for p in sources]
+            for src, dst in zip(sources, [dest, Path(str(dest) + '-wal')]):
+                if src.exists():
+                    # APFS clone is fast and consumes only changed blocks.
+                    result = subprocess.run(['cp', '-c', str(src), str(dst)], capture_output=True) if sys.platform == 'darwin' else None
+                    if result is None or result.returncode:
+                        shutil.copyfile(src, dst)
+            after = [signature(p) for p in sources]
+            if before == after and before[0]:
+                # Open only the copy. Recover WAL in cache, then detach it for immutable reads.
+                with sqlite3.connect(dest, factory=ClosingConnection) as c:
+                    c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                    c.execute('PRAGMA journal_mode=DELETE')
+                os.replace(dest, target)
+                marker.write_text(json.dumps([str(source), after]))
+                return target
+        finally:
+            # The staging folder is this call's own; remove it on every path, errors included.
+            shutil.rmtree(staging, ignore_errors=True)
     raise RuntimeError('Database kept changing during snapshot; retry refresh. Existing index remains available.')
+
+
+def snapshot_marker(path):
+    """True only for a marker snapshot() wrote: [source path, signatures], named by that path's key."""
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(data, list) and len(data) == 2 and isinstance(data[0], str)
+            and isinstance(data[1], list) and snapshot_key(data[0]) == path.stem)
+
+
+def expire_snapshots(cache):
+    """Delete the database copies snapshot() made, once a refresh or source check is done.
+
+    A copy counts as the viewer's only when its marker proves it (see snapshot_marker).
+    The marker goes last, and only after its copy is gone, so a failed delete is retried next time.
+    """
+    from sources import DATABASE_LOCK
+    with DATABASE_LOCK:
+        for marker in cache.glob('*.json'):
+            if not snapshot_marker(marker):
+                continue
+            target = marker.with_suffix('.sqlite')
+            copies = [target, Path(str(target) + '-wal'), Path(str(target) + '-shm')]
+            for path in copies:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+            if not any(path.exists() for path in copies):
+                with contextlib.suppress(OSError):
+                    marker.unlink()
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -316,6 +353,7 @@ class Store(SourceMethods):
         except Exception as e:
             self.status['phase'] = 'Refresh stopped: ' + str(e)
         finally:
+            expire_snapshots(self.cache)
             self.status.update(busy=False, seconds=round(time.monotonic() - start, 3))
             self.lock.release()
 

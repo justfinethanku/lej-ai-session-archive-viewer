@@ -71,10 +71,15 @@ class ArchiveTests(unittest.TestCase):
             c.execute("INSERT INTO thread_spawn_edges VALUES('parent','a')")
         (root/'sessions/rollout.jsonl').write_text(json.dumps({'type':'session_meta','payload':{'id':'a'}})+'\n'+json.dumps({'type':'response_item','payload':{'type':'message','role':'user','content':'file duplicate'}})+'\n{')
         self.configure('codex',root);self.refresh()
+        copies=lambda: sorted(p.name for p in self.store.cache.iterdir() if p.name!='index.sqlite' and (p.suffix=='.sqlite' or p.name.startswith('snapshot-') or (p.suffix=='.json' and len(p.stem)==16)))
+        self.assertEqual(copies(),[],'refresh must expire its database copies')
         result=self.store.listing({});self.assertEqual(result['total'],1)
         session=self.store.session(result['sessions'][0]['id']);self.assertEqual(len(session['blocks']),2);self.assertTrue(session['session']['parent'].endswith('parent'))
         self.assertEqual(self.store.listing({'q':'duplicate'})['total'],0)
         self.assertEqual(self.store.discovery()['sources'][0]['count'],1)
+        self.assertEqual(copies(),[],'source checks must expire their database copies')
+        self.store.lock.acquire();self.store.refresh();self.assertEqual(self.store.status['phase'],'Ready')
+        self.assertEqual(self.store.listing({})['total'],1)
     def test_legacy_and_history(self):
         root=self.root/'codex';(root/'archived_sessions').mkdir(parents=True)
         (root/'archived_sessions/legacy.json').write_text(json.dumps({'session':{'id':'legacy','timestamp':'2026-01-01'},'messages':[{'role':'user','content':'Legacy prompt'}]}))
@@ -99,6 +104,41 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(copy.execute('SELECT value FROM sample').fetchone()[0],'synthetic')
             with self.assertRaises(sqlite3.OperationalError):copy.execute('DELETE FROM sample')
         self.assertEqual(before,[viewer.signature(p) for p in (db,Path(str(db)+'-wal'))]);c.close()
+    def t3_source(self):
+        db=self.root/'statev2.sqlite'
+        with fixture_db(db) as c:c.execute('CREATE TABLE orchestration_v2_projection_threads(id)');c.execute("INSERT INTO orchestration_v2_projection_threads VALUES('one')")
+        return db
+    def test_snapshot_expiry_spares_unrelated_files(self):
+        cache=self.store.cache;db=self.t3_source()
+        self.configure('t3',db)
+        # Unrelated files that only look like snapshots: a 16-character SQLite/JSON pair,
+        # a marker naming another path, and a snapshot-* folder holding a database.
+        (cache/'abcdefabcdefabcd.sqlite').write_bytes(b'unrelated');(cache/'abcdefabcdefabcd.json').write_text('{"not": "ours"}')
+        (cache/'0123456789abcdef.sqlite').write_bytes(b'unrelated');(cache/'0123456789abcdef.json').write_text(json.dumps(['/elsewhere/other.sqlite',[]]))
+        (cache/'snapshot-keep').mkdir();(cache/'snapshot-keep/original.sqlite').write_bytes(b'unrelated')
+        key=viewer.snapshot_key(db)
+        with database(db,cache):self.assertTrue((cache/(key+'.sqlite')).exists())
+        self.assertEqual(self.store.discovery()['sources'][0]['count'],1)
+        self.assertFalse((cache/(key+'.sqlite')).exists());self.assertFalse((cache/(key+'.json')).exists())
+        for name in ('abcdefabcdefabcd.sqlite','abcdefabcdefabcd.json','0123456789abcdef.sqlite','0123456789abcdef.json','snapshot-keep/original.sqlite'):
+            self.assertTrue((cache/name).exists(),name)
+    def test_snapshot_error_leaves_no_staging_folder(self):
+        db=self.t3_source()
+        with patch.object(viewer.subprocess,'run',side_effect=OSError('copy failed')),patch.object(viewer.shutil,'copyfile',side_effect=OSError('copy failed')):
+            with self.assertRaises(OSError):viewer.snapshot(db,self.store.cache)
+        self.assertEqual(list(self.store.cache.glob('snapshot-*')),[])
+    def test_failed_snapshot_delete_is_retried(self):
+        cache=self.store.cache;db=self.t3_source();key=viewer.snapshot_key(db)
+        with database(db,cache):pass
+        copy,marker=cache/(key+'.sqlite'),cache/(key+'.json')
+        unlink=Path.unlink
+        def failing(path,*args,**kwargs):
+            if path==copy:raise PermissionError('in use')
+            return unlink(path,*args,**kwargs)
+        with patch.object(Path,'unlink',failing):viewer.expire_snapshots(cache)
+        self.assertTrue(copy.exists());self.assertTrue(marker.exists(),'marker must stay until its copy is gone')
+        viewer.expire_snapshots(cache)
+        self.assertFalse(copy.exists());self.assertFalse(marker.exists())
     def test_source_collision(self):
         with self.assertRaises(ValueError):self.configure('claude',self.store.cache)
     def test_unknown_detected_not_supported(self):
