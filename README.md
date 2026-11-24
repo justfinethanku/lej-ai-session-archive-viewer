@@ -130,7 +130,7 @@ WSL homes are not searched. Add one as a folder, for example `\\wsl.localhost\Ub
 
 ## Private by default
 
-- **Read-only.** Your session files are never edited. Live databases are never even opened: the viewer copies the database and its WAL file as plain files, and reads only that private copy. It takes no lock, so your apps can stay open. The copy is deleted once indexing or a source check finishes, so it doesn't sit on your disk.
+- **Read-only.** Your session files are never edited. Live databases are never even opened: the viewer copies the database and its WAL file as plain files, and reads only that private copy. It takes no lock, so your apps can stay open. The copy is deleted once indexing or a source check finishes, so it doesn't sit on your disk. If a copy can't be deleted yet, for example because another program has it open, the viewer tries again after the next rebuild or source check. It only deletes copies it can prove it made; other files in the app data folder are left alone.
 - **Local only.** The server listens on 127.0.0.1 and nowhere else. It rejects requests from other hosts and other sites. It makes no network calls: no telemetry, no CDN, no remote fonts. Everything it needs ships in this folder.
 - **Kept apart.** The index, database copies, settings and imported exports live in your per-user app data, never in this folder:
   - Mac: `~/Library/Application Support/lej-ai-session-archive-viewer`
