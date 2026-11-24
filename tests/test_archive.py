@@ -23,7 +23,10 @@ def fixture_db(path):
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
-        self.store=viewer.Store(argparse.Namespace(data_dir=str(self.root/'cache')))
+        cache = self.root/'cache'
+        cache.mkdir()
+        (cache/'config.json').write_text(json.dumps({'sources': [], 'tags': {}}), encoding='utf-8')
+        self.store=viewer.Store(argparse.Namespace(data_dir=str(cache)))
     def tearDown(self): self.tmp.cleanup()
     def configure(self,kind,path,tags=None):
         self.store.save_config({'sources':[{'id':'sample','kind':kind,'path':str(path),'enabled':True}], 'tags':tags or {}})
@@ -150,6 +153,26 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.store.listing({'q':'Synthetic'})['total'],1)
         self.assertIn('Synthetic 110',''.join(self.store.export({'id':'sample:one'})))
 
+    def test_search_jumps_to_first_matching_page(self):
+        blocks = [
+            {'text': 'Café calendar' if i in (107, 209) else 'Synthetic entry',
+             'role': 'user', 'kind': 'message', 'time': f'{i:04}', 'model': ''}
+            for i in range(215)
+        ]
+        self.store.put('sample', 'other', {}, [blocks[107]])
+        self.store.put('sample', 'long', {}, reversed(blocks))
+        sid = 'sample:long'
+        query = 'CAFE calendar'
+        self.assertEqual(self.store.listing({'q': query})['total'], 2)
+        result = self.store.session(sid, query=query)
+        self.assertEqual(result['match_offsets'], [107, 209])
+        self.assertEqual(result['page'], 1)
+        self.assertEqual(len(result['blocks']), 100)
+        self.assertEqual(result['blocks'][7]['text'], 'Café calendar')
+        self.assertEqual(self.store.session(sid, page=0, query=query)['page'], 0)
+        self.assertEqual(self.store.session(sid, query='missing')['match_offsets'], [])
+        self.assertEqual(self.store.session(sid)['page'], 0)
+
     def test_unrecognized_codex_database(self):
         root=self.root/'codex';root.mkdir()
         with fixture_db(root/'thread_history_22.sqlite') as c:c.execute('CREATE TABLE unknown(value)')
@@ -222,12 +245,24 @@ class ArchiveTests(unittest.TestCase):
         warnings=[];self.assertEqual(len(list(viewer.records(p,warnings))),1);self.assertEqual(len(warnings),1)
     def test_http_security_and_routes(self):
         import threading,urllib.request,urllib.error
+        self.store.put('sample', 'long', {}, (
+            {'text': 'Search target' if i == 104 else 'Synthetic entry',
+             'role': 'user', 'kind': 'message', 'time': f'{i:04}', 'model': ''}
+            for i in range(105)
+        ))
         server=viewer.ThreadingHTTPServer(('127.0.0.1',0),viewer.Handler);server.store=self.store
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         base='http://127.0.0.1:'+str(server.server_port)
         try:
             for path in ('/','/static/app.js','/static/style.css','/api/status','/api/list','/api/sources'):
                 with urllib.request.urlopen(base+path) as r:self.assertEqual(r.status,200)
+            search = base + '/api/session?id=sample%3Along&q=Search+target'
+            for page, suffix in ((1, ''), (0, '&page=0')):
+                with urllib.request.urlopen(search + suffix) as response:
+                    result = json.load(response)
+                self.assertEqual(result['match_offsets'], [104])
+                self.assertEqual(result['page'], page)
+                self.assertEqual(result['blocks'][4]['text'], 'Search target' if page else 'Synthetic entry')
             for path in ('/static/fonts/hanken-grotesk-latin.woff2','/static/favicon.svg'):
                 with urllib.request.urlopen(base+path) as r:self.assertEqual(r.status,200)
             with urllib.request.urlopen(base+'/static/style.css') as r:self.assertIn("font-src 'self'",r.headers['Content-Security-Policy'])

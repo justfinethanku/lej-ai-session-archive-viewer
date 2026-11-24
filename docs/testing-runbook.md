@@ -14,6 +14,10 @@ Safe actions: run this suite and inspect synthetic exports. For a manual UI pass
 
 Real-store testing is read-only on originals but creates private snapshots and an index. Do not commit those files, exports, screenshots, actual transcripts or full source paths. Stop the viewer before deleting its chosen test data folder. No source cleanup or configuration changes are part of testing. Ordinary launch on an existing configured archive can expose its contents locally.
 
+## Search jump regression
+
+Verified November 18, 2026 with 21 passing unittests on Linux (Python 3.10, 3.12 and 3.14), plus Python compilation and JavaScript syntax checks. Headless Chromium on synthetic data confirmed the first hit after 100 entries scrolls into view on desktop and narrow layouts, including when it is inside a folded tool record. The browser pass also checked a close word form, **Next match**, and **Read from the start**.
+
 ## Interface pass in a browser
 
 Status: tested November 15, 2026 on macOS in headless Chrome, against tools/demo.py data. No account needed.
