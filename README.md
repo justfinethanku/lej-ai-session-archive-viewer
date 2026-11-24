@@ -130,7 +130,7 @@ WSL homes are not searched. Add one as a folder, for example `\\wsl.localhost\Ub
 
 ## Private by default
 
-- **Read-only.** Your session files are never edited. Live databases are never even opened: the viewer copies the database and its WAL file as plain files, and reads only that private copy. It takes no lock, so your apps can stay open.
+- **Read-only.** Your session files are never edited. Live databases are never even opened: the viewer copies the database and its WAL file as plain files, and reads only that private copy. It takes no lock, so your apps can stay open. The copy is deleted once indexing or a source check finishes, so it doesn't sit on your disk.
 - **Local only.** The server listens on 127.0.0.1 and nowhere else. It rejects requests from other hosts and other sites. It makes no network calls: no telemetry, no CDN, no remote fonts. Everything it needs ships in this folder.
 - **Kept apart.** The index, database copies, settings and imported exports live in your per-user app data, never in this folder:
   - Mac: `~/Library/Application Support/lej-ai-session-archive-viewer`
@@ -141,7 +141,7 @@ WSL homes are not searched. Add one as a folder, for example `\\wsl.localhost\Ub
 
 Be clear-eyed about one thing: the index holds your conversations, and those can hold secrets. Keep it on an encrypted disk and out of shared or synced folders. Markdown exports include tool details. The viewer does not redact anything.
 
-Turning a source off removes it from search the next time the index is rebuilt. Its database copy, and any imported export, stay in app data until you delete that folder (stop the viewer first).
+Turning a source off removes it from search the next time the index is rebuilt. Any imported export stays in app data until you delete that folder (stop the viewer first).
 
 ## When something's off
 
@@ -157,7 +157,7 @@ Turning a source off removes it from search the next time the index is rebuilt. 
 
 **A database "kept changing."** An app was writing while the viewer copied its database. Rebuild during a quiet moment.
 
-**Disk space.** Plan for a few GB with a large archive, for the index and the database copies.
+**Disk space.** Plan for a few GB with a large archive for the index. While it rebuilds, the viewer also needs room for a temporary copy of each database it reads (on a Mac, APFS clones keep that small); the copies are removed when it finishes.
 
 Settings also live in `config.json` in the app data folder. Stop the viewer before editing it by hand.
 

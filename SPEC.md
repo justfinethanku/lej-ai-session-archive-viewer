@@ -16,9 +16,9 @@ Claude export ZIPs read chat_messages from conversations.json. ChatGPT exports r
 
 Sources are configured by kind, ID, local path and enabled flag. Default locations resolve for each OS, and copied folders are additive. New installations begin with sources disabled and no tag rules. Unknown stores appear as detected but unsupported, without guessed counts. Export-only sources are offered separately.
 
-A stable DB/WAL snapshot requires unchanged file identity, size and timestamps across copying. Live databases are never opened through SQLite. Recovery affects only the private copy; final reads are mode=ro&immutable=1. An active writer can exhaust the bounded retries and require another refresh. Snapshots from discovery can contain private data before indexing is enabled.
+A stable DB/WAL snapshot requires unchanged file identity, size and timestamps across copying. Live databases are never opened through SQLite. Recovery affects only the private copy; final reads are mode=ro&immutable=1. An active writer can exhaust the bounded retries and require another refresh. Snapshots are temporary: they are deleted when a refresh finishes and when a source check runs outside a refresh. A refresh therefore copies each database again; the index is the only kept artifact.
 
-Refresh rebuilds enabled sources and removes disabled/missing source records from the searchable index. It is not transactional across the entire archive: sessions can appear progressively, and an adapter error may leave partial results. Snapshots and imported originals remain private app data. Stop the viewer before deleting app data to reset everything.
+Refresh rebuilds enabled sources and removes disabled/missing source records from the searchable index. It is not transactional across the entire archive: sessions can appear progressively, and an adapter error may leave partial results. Imported originals remain private app data. Stop the viewer before deleting app data to reset everything.
 
 Tags map names to keyword lists. Whole-word, case-insensitive keyword matching uses title, project and transcript. Tag chains sort by start and ID; tag Markdown exports ignore list filters. Lists have 50 sessions per page; transcript pages have 100 blocks. FTS searches quoted phrases across all block text. Exports stream Markdown including tools.
 

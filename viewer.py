@@ -208,6 +208,21 @@ def snapshot(source, cache):
     raise RuntimeError('Database kept changing during snapshot; retry refresh. Existing index remains available.')
 
 
+def expire_snapshots(cache):
+    """Delete database copies once a refresh or source check is done; the index is the product."""
+    from sources import DATABASE_LOCK
+    with DATABASE_LOCK:
+        for marker in cache.glob('*.json'):
+            target = marker.with_suffix('.sqlite')
+            if len(marker.stem) != 16 or not target.exists():
+                continue
+            for path in (target, Path(str(target) + '-wal'), Path(str(target) + '-shm'), marker):
+                with contextlib.suppress(OSError):
+                    path.unlink()
+        for staging in cache.glob('snapshot-*'):
+            shutil.rmtree(staging, ignore_errors=True)
+
+
 class ClosingConnection(sqlite3.Connection):
     def __exit__(self, *args):
         try:
@@ -316,6 +331,7 @@ class Store(SourceMethods):
         except Exception as e:
             self.status['phase'] = 'Refresh stopped: ' + str(e)
         finally:
+            expire_snapshots(self.cache)
             self.status.update(busy=False, seconds=round(time.monotonic() - start, 3))
             self.lock.release()
 
